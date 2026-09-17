@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 from bonusdesk.bulk_parser import parse_bulk_payments, parse_money
@@ -109,7 +110,7 @@ class BulkPaymentTests(unittest.TestCase):
 
     def test_money_and_versions_are_parsed(self):
         self.assertEqual(parse_money("2.000.000$"), 2_000_000)
-        self.assertGreater(version_tuple("v2.1.0"), version_tuple("2.0.9"))
+        self.assertGreater(version_tuple("v2.2.0"), version_tuple("2.1.0"))
 
 
 class ParserTests(unittest.TestCase):
@@ -155,6 +156,29 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(prices[("ED", "Написание T3")], 5000)
         self.assertEqual(prices[("HA", "Проверка отчета на повышение")], 3000)
         self.assertEqual(prices[("ND", "Монтаж")], 40000)
+
+    def test_active_period_does_not_rotate_with_calendar(self):
+        original = self.db.current_week()
+        future_id = self.db.ensure_current_week(date.today() + timedelta(days=45))
+        self.assertEqual(future_id, int(original["id"]))
+        self.assertEqual(len(self.db.weeks()), 1)
+
+    def test_new_period_is_created_manually_and_archives_previous(self):
+        previous = self.db.current_week()
+        start = date.fromisoformat(previous["date_end"]) + timedelta(days=2)
+        end = start + timedelta(days=9)
+        new_id = self.db.create_week(start, end)
+        self.assertNotEqual(new_id, int(previous["id"]))
+        self.assertEqual(int(self.db.current_week()["id"]), new_id)
+        weeks = {int(row["id"]): row for row in self.db.weeks()}
+        self.assertEqual(weeks[int(previous["id"])]["status"], "archived")
+        self.assertEqual(weeks[new_id]["title"], f"{start:%d.%m.%Y} — {end:%d.%m.%Y}")
+
+    def test_overlapping_period_is_rejected(self):
+        current = self.db.current_week()
+        start = date.fromisoformat(current["date_start"])
+        with self.assertRaisesRegex(ValueError, "пересекаются"):
+            self.db.create_week(start, start + timedelta(days=2))
 
     def test_all_current_form_labels_match_price_rows(self):
         labels = [
@@ -232,6 +256,28 @@ class DatabaseTests(unittest.TestCase):
         self.db.add_report(self.week_id, parsed)
         with self.assertRaises(DuplicateReportError):
             self.db.add_report(self.week_id, parsed)
+
+    def test_bulk_report_actions_keep_invalid_reports_pending(self):
+        valid_id = self.db.add_report(self.week_id, parse_report(AD_REPORT))
+        invalid = ParsedReport(
+            "Needs Review",
+            "700002",
+            "XX",
+            "",
+            [ParsedItem("Неизвестная работа", 1, "https://proof.test/unknown")],
+            "invalid bulk report",
+        )
+        invalid_id = self.db.add_report(self.week_id, invalid)
+        approved, invalid_ids = self.db.approve_week_reports(self.week_id)
+        self.assertEqual(approved, 1)
+        self.assertEqual(invalid_ids, [invalid_id])
+        self.assertEqual(self.db.report(valid_id)[0]["status"], "approved")
+        self.assertEqual(self.db.report(invalid_id)[0]["status"], "pending")
+
+        self.assertEqual(self.db.reset_week_reports(self.week_id), 2)
+        self.assertTrue(all(row["status"] == "pending" for row in self.db.reports(self.week_id)))
+        self.assertEqual(self.db.delete_week_reports(self.week_id), 2)
+        self.assertEqual(self.db.reports(self.week_id), [])
 
     def test_duplicate_evidence_is_flagged(self):
         one = ParsedReport("A", "1", "AD", "", [ParsedItem("Подача 1 смс", 1, "https://proof.test/x")], "one")

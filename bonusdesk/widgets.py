@@ -81,7 +81,7 @@ def page_header(title: str, subtitle: str = "") -> tuple[QWidget, QHBoxLayout]:
     text.addWidget(heading)
     if subtitle:
         caption = QLabel(subtitle)
-        caption.setObjectName("muted")
+        caption.setObjectName("pageSubtitle")
         text.addWidget(caption)
     layout.addLayout(text)
     layout.addStretch(1)

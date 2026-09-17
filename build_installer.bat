@@ -13,7 +13,19 @@ if not exist "%ISCC%" (
   exit /b 1
 )
 
-"%ISCC%" /DMyAppVersion=2.1.0 "installer\BonusDesk.iss"
+set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+if not exist "%CSC%" (
+  echo.
+  echo Kompilyator C# ne naiden. Ustanovi .NET Framework 4.x.
+  pause
+  exit /b 1
+)
+
+"%CSC%" /nologo /target:winexe /optimize+ /out:"installer\FolderPicker.exe" "installer\FolderPicker.cs"
+if errorlevel 1 exit /b 1
+
+"%ISCC%" /DMyAppVersion=2.2.0 "installer\BonusDesk.iss"
 if errorlevel 1 (
   echo.
   echo Oshibka sborki ustanovshika.

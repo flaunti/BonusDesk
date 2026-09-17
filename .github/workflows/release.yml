@@ -41,6 +41,7 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
+          & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /out:"installer\FolderPicker.exe" "installer\FolderPicker.cs"
           $releaseTag = "${{ github.ref_name }}".Replace("release-", "")
           $version = $releaseTag.TrimStart("v")
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "installer\BonusDesk.iss"

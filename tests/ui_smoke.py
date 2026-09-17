@@ -51,7 +51,7 @@ def main() -> int:
         window.bulk_page.source.setPlainText(
             "Alex Example | 100001 | Director | Example Org\n"
             "Alex Example | 100001 | 15 | 100.000$\n"
-            "Maria Example | 100002 | 14 | 100.000$\n"
+            "Edward Saint | 46604 | 14 | 100.000$\n"
             "Итоговая сумма: 200.000$"
         )
         window.bulk_page.parse()
@@ -75,7 +75,7 @@ def main() -> int:
             output.parent.mkdir(parents=True, exist_ok=True)
             if not window.grab().save(str(output)):
                 raise RuntimeError("Could not save UI screenshot")
-            for index, suffix in ((1, "summary"), (2, "bulk"), (3, "prices"), (5, "settings")):
+            for index, suffix in ((1, "summary"), (2, "bulk"), (3, "prices"), (4, "periods"), (5, "settings")):
                 if index == 1:
                     window.review_page.row_controls[0]["accepted"].setValue(20)
                 window.navigate(index)

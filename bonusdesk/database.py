@@ -197,18 +197,50 @@ class Database:
             )
 
     def ensure_current_week(self, today: date | None = None) -> int:
-        today = today or date.today()
-        start = today - timedelta(days=today.weekday())
-        end = start + timedelta(days=6)
-        title = f"{start.strftime('%d.%m.%Y')} — {end.strftime('%d.%m.%Y')}"
         with self.connect() as con:
-            con.execute("UPDATE weeks SET status='archived' WHERE status='current' AND date_start<>?", (start.isoformat(),))
-            con.execute(
-                "INSERT OR IGNORE INTO weeks(date_start,date_end,title,status) VALUES (?,?,?,'current')",
+            current = con.execute(
+                "SELECT id FROM weeks WHERE status='current' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if current:
+                return int(current["id"])
+
+            latest = con.execute("SELECT id FROM weeks ORDER BY date_start DESC, id DESC LIMIT 1").fetchone()
+            if latest:
+                con.execute("UPDATE weeks SET status='current' WHERE id=?", (latest["id"],))
+                return int(latest["id"])
+
+            today = today or date.today()
+            start = today - timedelta(days=today.weekday())
+            end = start + timedelta(days=6)
+            title = self._week_title(start, end)
+            cursor = con.execute(
+                "INSERT INTO weeks(date_start,date_end,title,status) VALUES (?,?,?,'current')",
                 (start.isoformat(), end.isoformat(), title),
             )
-            con.execute("UPDATE weeks SET status='current' WHERE date_start=?", (start.isoformat(),))
-            return int(con.execute("SELECT id FROM weeks WHERE date_start=?", (start.isoformat(),)).fetchone()["id"])
+            return int(cursor.lastrowid)
+
+    @staticmethod
+    def _week_title(start: date, end: date) -> str:
+        return f"{start.strftime('%d.%m.%Y')} — {end.strftime('%d.%m.%Y')}"
+
+    def create_week(self, start: date, end: date) -> int:
+        if end < start:
+            raise ValueError("Дата окончания не может быть раньше даты начала.")
+        with self.connect() as con:
+            overlap = con.execute(
+                """SELECT title FROM weeks
+                   WHERE date_start<=? AND date_end>=?
+                   ORDER BY date_start LIMIT 1""",
+                (end.isoformat(), start.isoformat()),
+            ).fetchone()
+            if overlap:
+                raise ValueError(f"Выбранные даты пересекаются с периодом «{overlap['title']}».")
+            con.execute("UPDATE weeks SET status='archived' WHERE status='current'")
+            cursor = con.execute(
+                "INSERT INTO weeks(date_start,date_end,title,status) VALUES (?,?,?,'current')",
+                (start.isoformat(), end.isoformat(), self._week_title(start, end)),
+            )
+            return int(cursor.lastrowid)
 
     def current_week(self) -> sqlite3.Row:
         week_id = self.ensure_current_week()
@@ -338,6 +370,41 @@ class Database:
     def delete_report(self, report_id: int) -> None:
         with self.connect() as con:
             con.execute("DELETE FROM reports WHERE id=?", (report_id,))
+
+    def approve_week_reports(self, week_id: int) -> tuple[int, list[int]]:
+        """Approve every valid report and return (approved count, invalid report ids)."""
+        reviewed_at = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as con:
+            invalid_rows = con.execute(
+                """SELECT DISTINCT r.id
+                   FROM reports r JOIN report_items i ON i.report_id=r.id
+                   WHERE r.week_id=? AND i.accepted_count>0
+                     AND (i.work_type_id IS NULL OR i.price_snapshot<=0)
+                   ORDER BY r.id""",
+                (week_id,),
+            ).fetchall()
+            invalid_ids = [int(row["id"]) for row in invalid_rows]
+            sql = "UPDATE reports SET status='approved', reviewed_at=? WHERE week_id=?"
+            params: list[object] = [reviewed_at, week_id]
+            if invalid_ids:
+                placeholders = ",".join("?" for _ in invalid_ids)
+                sql += f" AND id NOT IN ({placeholders})"
+                params.extend(invalid_ids)
+            cursor = con.execute(sql, params)
+            return int(cursor.rowcount), invalid_ids
+
+    def reset_week_reports(self, week_id: int) -> int:
+        with self.connect() as con:
+            cursor = con.execute(
+                "UPDATE reports SET status='pending', reviewed_at=NULL WHERE week_id=?",
+                (week_id,),
+            )
+            return int(cursor.rowcount)
+
+    def delete_week_reports(self, week_id: int) -> int:
+        with self.connect() as con:
+            cursor = con.execute("DELETE FROM reports WHERE week_id=?", (week_id,))
+            return int(cursor.rowcount)
 
     def duplicate_evidence(self, report_id: int) -> list[sqlite3.Row]:
         with self.connect() as con:

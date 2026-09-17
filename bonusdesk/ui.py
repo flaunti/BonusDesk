@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QTimer, Qt, QUrl, Signal
+from PySide6.QtCore import QDate, QEvent, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
+    QDateEdit,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -50,6 +52,76 @@ def notify(parent, title: str, text: str) -> None:
     QMessageBox.information(parent, title, text)
 
 
+class CreateWeekDialog(QDialog):
+    def __init__(self, db: Database, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Новый отчётный период")
+        self.setModal(True)
+        self.setMinimumWidth(470)
+
+        current = db.current_week()
+        default_start = date.fromisoformat(current["date_end"]) + timedelta(days=1)
+        default_end = default_start + timedelta(days=6)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 22, 22, 18)
+        root.setSpacing(16)
+        title = QLabel("Создать отчётный период")
+        title.setObjectName("pageTitle")
+        hint = QLabel(
+            "Укажи точные даты. Текущий период будет перенесён в архив, "
+            "а все новые отчёты начнут попадать в созданный период."
+        )
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        root.addWidget(title)
+        root.addWidget(hint)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(12)
+        self.start_date = QDateEdit(QDate(default_start.year, default_start.month, default_start.day))
+        self.end_date = QDateEdit(QDate(default_end.year, default_end.month, default_end.day))
+        for editor in (self.start_date, self.end_date):
+            editor.setCalendarPopup(True)
+            editor.setDisplayFormat("dd.MM.yyyy")
+            editor.setMinimumWidth(190)
+        self.start_date.dateChanged.connect(self._start_changed)
+        form.addRow("Начало периода", self.start_date)
+        form.addRow("Окончание периода", self.end_date)
+        root.addLayout(form)
+
+        self.preview = QLabel()
+        self.preview.setObjectName("periodPreview")
+        self.preview.setWordWrap(True)
+        root.addWidget(self.preview)
+        self.start_date.dateChanged.connect(self._update_preview)
+        self.end_date.dateChanged.connect(self._update_preview)
+        self._update_preview()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
+        buttons.button(QDialogButtonBox.Ok).setText("Создать период")
+        buttons.button(QDialogButtonBox.Ok).setObjectName("primary")
+        buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _start_changed(self, value: QDate) -> None:
+        self.end_date.setMinimumDate(value)
+        self.end_date.setDate(value.addDays(6))
+
+    def _update_preview(self, _value=None) -> None:
+        start = self.start_date.date().toString("dd.MM.yyyy")
+        end = self.end_date.date().toString("dd.MM.yyyy")
+        days = self.start_date.date().daysTo(self.end_date.date()) + 1
+        self.preview.setText(f"Новый период:  {start} — {end}   ·   {days} дн.")
+
+    def dates(self) -> tuple[date, date]:
+        return self.start_date.date().toPython(), self.end_date.date().toPython()
+
+
 class ReviewPage(QWidget):
     data_changed = Signal()
 
@@ -66,7 +138,8 @@ class ReviewPage(QWidget):
         root.setContentsMargins(26, 22, 26, 22)
         root.setSpacing(16)
         week = db.current_week()
-        header, header_layout = page_header("Проверка отчётов", f"Текущая неделя: {week['title']}")
+        header, header_layout = page_header("Проверка отчётов", f"Активный период: {week['title']}")
+        self.week_caption = header.findChild(QLabel, "pageSubtitle")
         import_button = QPushButton("Импортировать из буфера")
         import_button.setObjectName("primary")
         import_button.clicked.connect(self.import_clipboard)
@@ -75,6 +148,29 @@ class ReviewPage(QWidget):
         header_layout.addWidget(manual_button)
         header_layout.addWidget(import_button)
         root.addWidget(header)
+
+        self.bulk_bar = Card(margins=(14, 10, 14, 10))
+        bulk_actions = QHBoxLayout()
+        bulk_title = QLabel("Массовые действия")
+        bulk_title.setObjectName("sectionTitle")
+        self.bulk_count = QLabel("Отчётов: 0")
+        self.bulk_count.setObjectName("muted")
+        self.approve_all_button = QPushButton("Засчитать все")
+        self.approve_all_button.setObjectName("success")
+        self.approve_all_button.clicked.connect(self.approve_all)
+        self.reset_all_button = QPushButton("Вернуть на проверку все")
+        self.reset_all_button.clicked.connect(self.reset_all)
+        self.delete_all_button = QPushButton("Удалить все")
+        self.delete_all_button.setObjectName("danger")
+        self.delete_all_button.clicked.connect(self.delete_all)
+        bulk_actions.addWidget(bulk_title)
+        bulk_actions.addWidget(self.bulk_count)
+        bulk_actions.addStretch(1)
+        bulk_actions.addWidget(self.reset_all_button)
+        bulk_actions.addWidget(self.delete_all_button)
+        bulk_actions.addWidget(self.approve_all_button)
+        self.bulk_bar.box.addLayout(bulk_actions)
+        root.addWidget(self.bulk_bar)
 
         content = QHBoxLayout()
         content.setSpacing(16)
@@ -184,10 +280,23 @@ class ReviewPage(QWidget):
 
     def refresh(self, keep_id: int | None = None) -> None:
         self.persist_if_dirty()
+        week = self.db.current_week()
+        new_week_id = int(week["id"])
+        if new_week_id != self.week_id:
+            self.week_id = new_week_id
+            self.current_report_id = None
+            keep_id = None
+        if self.week_caption:
+            self.week_caption.setText(f"Активный период: {week['title']}")
         keep_id = keep_id if keep_id is not None else self.current_report_id
         self.report_list.clear()
         selected_item = None
-        for report in self.db.reports(self.week_id):
+        reports = self.db.reports(self.week_id)
+        pending_count = sum(1 for report in reports if report["status"] == "pending")
+        self.bulk_count.setText(f"Отчётов: {len(reports)}  ·  ожидают: {pending_count}")
+        for button in (self.approve_all_button, self.reset_all_button, self.delete_all_button):
+            button.setEnabled(bool(reports))
+        for report in reports:
             item = QListWidgetItem(
                 f"{STATUS_MARKS[report['status']]}  {report['employee_name']}\n"
                 f"    #{report['static_id']}  ·  {money(report['raw_amount'])}"
@@ -384,6 +493,72 @@ class ReviewPage(QWidget):
             self.refresh()
             self.data_changed.emit()
 
+    def approve_all(self) -> None:
+        reports = self.db.reports(self.week_id)
+        if not reports:
+            return
+        self.persist_if_dirty()
+        answer = QMessageBox.question(
+            self,
+            "Засчитать все отчёты?",
+            f"Будут засчитаны все корректные отчёты активного периода — всего {len(reports)}.\n\n"
+            "Отчёты с несопоставленными работами или нулевой ценой останутся на проверке.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        approved, invalid_ids = self.db.approve_week_reports(self.week_id)
+        self.refresh(self.current_report_id)
+        self.data_changed.emit()
+        if invalid_ids:
+            QMessageBox.warning(
+                self,
+                "Часть отчётов требует проверки",
+                f"Засчитано: {approved}.\nОставлено на проверке: {len(invalid_ids)}.\n\n"
+                "Проверь сопоставление работ и цены в оставшихся отчётах.",
+            )
+        else:
+            notify(self, "Готово", f"Засчитано отчётов: {approved}.")
+
+    def reset_all(self) -> None:
+        reports = self.db.reports(self.week_id)
+        if not reports:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Вернуть все отчёты на проверку?",
+            f"Статус всех отчётов активного периода ({len(reports)}) изменится на «Ожидает проверки».\n"
+            "Принятые количества и цены сохранятся.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            count = self.db.reset_week_reports(self.week_id)
+            self.refresh(self.current_report_id)
+            self.data_changed.emit()
+            notify(self, "Готово", f"Возвращено на проверку: {count}.")
+
+    def delete_all(self) -> None:
+        reports = self.db.reports(self.week_id)
+        if not reports:
+            return
+        week = self.db.current_week()
+        answer = QMessageBox.question(
+            self,
+            "Удалить все отчёты?",
+            f"Будут безвозвратно удалены все отчёты периода {week['title']} — всего {len(reports)}.\n\n"
+            "Сам отчётный период останется. Продолжить?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            count = self.db.delete_week_reports(self.week_id)
+            self.current_report_id = None
+            self.refresh()
+            self.data_changed.emit()
+            notify(self, "Отчёты удалены", f"Удалено отчётов: {count}.")
+
     def import_clipboard(self) -> None:
         dialog = ImportReportDialog(QApplication.clipboard().text(), parent=self)
         self._run_import(dialog)
@@ -412,7 +587,8 @@ class SummaryPage(QWidget):
         root.setContentsMargins(26, 22, 26, 22)
         root.setSpacing(16)
         week = db.current_week()
-        header, actions = page_header("Итоги недели", week["title"])
+        header, actions = page_header("Итоги недели", f"Активный период: {week['title']}")
+        self.week_caption = header.findChild(QLabel, "pageSubtitle")
         copy_button = QPushButton("Скопировать итог")
         copy_button.clicked.connect(self.copy_export)
         export_button = QPushButton("Экспорт TXT")
@@ -447,6 +623,10 @@ class SummaryPage(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
+        week = self.db.current_week()
+        self.week_id = int(week["id"])
+        if self.week_caption:
+            self.week_caption.setText(f"Активный период: {week['title']}")
         rows = self.db.aggregates(self.week_id)
         limit = int(self.db.setting("weekly_limit", "150000"))
         raw_total = sum(int(row["raw_amount"]) for row in rows)
@@ -670,18 +850,26 @@ class ArchiveDetailsDialog(QDialog):
 
 
 class ArchivePage(QWidget):
+    data_changed = Signal()
+
     def __init__(self, db: Database):
         super().__init__()
         self.db = db
         root = QVBoxLayout(self)
         root.setContentsMargins(26, 22, 26, 22)
         root.setSpacing(16)
-        header, actions = page_header("Архив", "История отчётов по завершённым неделям.")
+        header, actions = page_header(
+            "Отчётные периоды",
+            "Создавай новый период вручную, когда текущий завершён.",
+        )
+        self.create_button = QPushButton("+ Создать период")
+        self.create_button.setObjectName("primary")
+        self.create_button.clicked.connect(self.create_period)
         self.view_button = QPushButton("Просмотреть отчёты")
         self.view_button.clicked.connect(self.view_selected)
-        self.export_button = QPushButton("Экспорт выбранной недели")
-        self.export_button.setObjectName("primary")
+        self.export_button = QPushButton("Экспорт выбранного периода")
         self.export_button.clicked.connect(self.export_selected)
+        actions.addWidget(self.create_button)
         actions.addWidget(self.view_button)
         actions.addWidget(self.export_button)
         root.addWidget(header)
@@ -704,13 +892,32 @@ class ArchivePage(QWidget):
         self.table.setRowCount(len(weeks))
         for index, week in enumerate(weeks):
             stats = self.db.week_stats(int(week["id"]))
-            values = [week["title"], "Текущая" if week["status"] == "current" else "Архив", stats["reports_count"], stats["pending_count"], stats["employees_count"], money(stats["raw_total"])]
+            values = [week["title"], "Активный" if week["status"] == "current" else "Архив", stats["reports_count"], stats["pending_count"], stats["employees_count"], money(stats["raw_total"])]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setData(Qt.UserRole, int(week["id"]))
                 self.table.setItem(index, col, item)
         if weeks:
             self.table.selectRow(0)
+
+    def create_period(self) -> None:
+        dialog = CreateWeekDialog(self.db, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        start, end = dialog.dates()
+        try:
+            self.db.create_week(start, end)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Не удалось создать период", str(exc))
+            return
+        self.refresh()
+        self.data_changed.emit()
+        notify(
+            self,
+            "Новый период создан",
+            f"Активный период: {start.strftime('%d.%m.%Y')} — {end.strftime('%d.%m.%Y')}.\n"
+            "Предыдущий период сохранён в архиве.",
+        )
 
     def export_selected(self) -> None:
         row = self.table.currentRow()
@@ -791,6 +998,8 @@ class SettingsPage(QWidget):
         repository = QLabel(f'<a href="{REPOSITORY_URL}">github.com/flaunti/BonusDesk ↗</a>')
         repository.setOpenExternalLinks(True)
         repository.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        author = QLabel("Автор: Edward Saint  ·  Static ID 46604")
+        author.setObjectName("muted")
         self.auto_updates = QCheckBox("Проверять обновления автоматически")
         self.auto_updates.setChecked(db.setting("update_check_enabled", "1") == "1")
         check_button = QPushButton("Проверить обновления")
@@ -802,6 +1011,7 @@ class SettingsPage(QWidget):
         updates.box.addWidget(update_title)
         updates.box.addWidget(self.update_status)
         updates.box.addWidget(repository)
+        updates.box.addWidget(author)
         updates.box.addLayout(update_actions)
         root.addWidget(updates)
         root.addStretch(1)
@@ -938,6 +1148,7 @@ class MainWindow(QMainWindow):
 
         self.review_page.data_changed.connect(self.refresh_dependent)
         self.price_page.data_changed.connect(self.refresh_dependent)
+        self.archive_page.data_changed.connect(self.refresh_dependent)
         self.settings_page.data_changed.connect(self.refresh_dependent)
         status = QStatusBar()
         status.showMessage("Готово к работе")

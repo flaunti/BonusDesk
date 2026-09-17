@@ -61,7 +61,7 @@ class BulkListPage(QWidget):
         self.source = QTextEdit()
         self.source.setPlaceholderText(
             "Alex Example | 100001 | 15 | 100.000$\n"
-            "Maria Example | 100002 | 14 | 100.000$\n\n"
+            "Edward Saint | 46604 | 14 | 100.000$\n\n"
             "Итоговая сумма: 200.000$"
         )
         self.source.textChanged.connect(self._mark_dirty)

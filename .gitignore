@@ -6,5 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.zip
+installer/FolderPicker.exe
+installer/output/
 *_preview*.png
 .DS_Store
