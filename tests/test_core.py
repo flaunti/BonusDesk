@@ -156,6 +156,18 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(prices[("ED", "Написание T3")], 5000)
         self.assertEqual(prices[("HA", "Проверка отчета на повышение")], 3000)
         self.assertEqual(prices[("ND", "Монтаж")], 40000)
+        general_prices = [row["price"] for row in self.db.work_types() if row["department"] == "Общее"]
+        self.assertEqual(general_prices, [2000, 2000, 2000])
+
+    def test_fresh_database_contains_no_reports(self):
+        self.assertEqual(self.db.reports(self.week_id), [])
+
+    def test_known_demo_reports_are_removed_once(self):
+        report_id = self.db.add_report(self.week_id, parse_report(AD_REPORT))
+        with self.db.connect() as con:
+            con.execute("DELETE FROM settings WHERE key='demo_data_cleanup_version'")
+        Database(self.db.path)
+        self.assertIsNone(self.db.report(report_id)[0])
 
     def test_active_period_does_not_rotate_with_calendar(self):
         original = self.db.current_week()
@@ -222,6 +234,14 @@ class DatabaseTests(unittest.TestCase):
         departments = {row["department"] for row in self.db.work_types()}
         self.assertIn("Общее", departments)
         self.assertNotIn(legacy_department, departments)
+
+    def test_general_department_prices_are_migrated_to_2000(self):
+        with self.db.connect() as con:
+            con.execute("UPDATE work_types SET price=0 WHERE department='Общее'")
+            con.execute("UPDATE settings SET value='3' WHERE key='price_seed_version'")
+        Database(self.db.path)
+        prices = [row["price"] for row in self.db.work_types() if row["department"] == "Общее"]
+        self.assertEqual(prices, [2000, 2000, 2000])
 
     def test_import_match_calculate_and_limit(self):
         report_id = self.db.add_report(self.week_id, parse_report(ED_REPORT))

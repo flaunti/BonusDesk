@@ -25,7 +25,7 @@ if not exist "%CSC%" (
 "%CSC%" /nologo /target:winexe /optimize+ /out:"installer\FolderPicker.exe" "installer\FolderPicker.cs"
 if errorlevel 1 exit /b 1
 
-"%ISCC%" /DMyAppVersion=2.2.0 "installer\BonusDesk.iss"
+"%ISCC%" /DMyAppVersion=2.2.1 "installer\BonusDesk.iss"
 if errorlevel 1 (
   echo.
   echo Oshibka sborki ustanovshika.

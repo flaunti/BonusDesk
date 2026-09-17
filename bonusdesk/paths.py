@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -26,15 +25,7 @@ def app_data_dir() -> Path:
 
 
 def database_path() -> Path:
-    path = app_data_dir() / "data" / "bonusdesk.db"
-    if not path.exists():
-        # Keep data created by earlier builds when the product name changes.
-        legacy_root = app_data_dir().parent / "".join(("WN", "BonusChecker"))
-        legacy_path = legacy_root / "data" / "_".join(("wn", "bonus.db"))
-        if legacy_path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(legacy_path, path)
-    return path
+    return app_data_dir() / "data" / "bonusdesk.db"
 
 
 def exports_dir() -> Path:

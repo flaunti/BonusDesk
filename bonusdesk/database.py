@@ -134,8 +134,8 @@ class Database:
                     ("ED", "Проведение ГМП", 50000, ["Проведение глобального мероприятия", "ГМП"]),
                     ("ED", "Написание T3", 5000, ["Написание ТЗ", "Написание Т3", "ТЗ", "T3"]),
                     ("Общее", "1 отчет об услугах и казне фракции, складе, онлайне", 2000, ["Отчёт об услугах, казне, складе и онлайне", "1 отчёт об услугах и казне фракции, складе, онлайне"]),
-                    ("Общее", "Проверенные отчёты на повышение", 0, ["Проверенные отчеты на повышение"]),
-                    ("Общее", "Проверенные запросы на повышение", 0, ["Проверенные запросы на повышение"]),
+                    ("Общее", "Проверенные отчёты на повышение", 2000, ["Проверенные отчеты на повышение"]),
+                    ("Общее", "Проверенные запросы на повышение", 2000, ["Проверенные запросы на повышение"]),
                 ]
                 for department, name, price, aliases in seed:
                     con.execute(
@@ -173,6 +173,27 @@ class Database:
                 con.execute("UPDATE work_types SET department='Общее' WHERE department=?", (legacy_department,))
                 con.execute(
                     "INSERT INTO settings(key,value) VALUES ('price_seed_version','3') "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                )
+                seed_version = 3
+            if seed_version < 4:
+                con.execute("UPDATE work_types SET price=2000 WHERE department='Общее'")
+                con.execute(
+                    "INSERT INTO settings(key,value) VALUES ('price_seed_version','4') "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                )
+            cleanup = con.execute(
+                "SELECT value FROM settings WHERE key='demo_data_cleanup_version'"
+            ).fetchone()
+            if not cleanup or int(cleanup["value"]) < 1:
+                con.execute(
+                    """DELETE FROM reports
+                       WHERE source_text LIKE '%example.test%'
+                         AND ((employee_name='Test Employee' AND static_id='100001')
+                           OR (employee_name='Second Employee' AND static_id='100002'))"""
+                )
+                con.execute(
+                    "INSERT INTO settings(key,value) VALUES ('demo_data_cleanup_version','1') "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
                 )
             legacy_items = con.execute("SELECT id,evidence_url FROM report_items WHERE evidence_url<>''").fetchall()

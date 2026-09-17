@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 2, 0, 0),
-    prodvers=(2, 2, 0, 0),
+    filevers=(2, 2, 1, 0),
+    prodvers=(2, 2, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'Flaunti'),
           StringStruct(u'FileDescription', u'BonusDesk — bonus review and payout export'),
-          StringStruct(u'FileVersion', u'2.2.0'),
+          StringStruct(u'FileVersion', u'2.2.1'),
           StringStruct(u'InternalName', u'BonusDesk'),
           StringStruct(u'OriginalFilename', u'BonusDesk.exe'),
           StringStruct(u'ProductName', u'BonusDesk'),
-          StringStruct(u'ProductVersion', u'2.2.0')
+          StringStruct(u'ProductVersion', u'2.2.1')
         ]
       )
     ]),
